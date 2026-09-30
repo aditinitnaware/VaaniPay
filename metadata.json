@@ -1,0 +1,6 @@
+{
+  "name": "VaaniPay - Voice-First Regional UPI Payments",
+  "description": "A mobile-first, voice-enabled UPI payments prototype built for low-literacy and elderly users in regional Indian languages (Marathi, Hindi, Tamil, Telugu, Bengali, English).",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
