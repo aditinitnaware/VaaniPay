@@ -1,97 +1,308 @@
-=====================================================
-PATCH v2: THESE CHANGES OVERRIDE ANY CONFLICTING EARLIER SECTIONS
-=====================================================
+<div align="center">
 
------------------------------------------------------
-CHANGE 1: BALANCE IS STRICTLY HIDDEN UNTIL PIN IS VERIFIED
------------------------------------------------------
-- The balance value must NEVER be present in the UI, DOM, notifications, toasts, page titles, aria-labels, TTS output or localStorage until the PIN is verified in that moment.
-- Store balances only in a mock "vault" module. It exposes getBalance(accountId, pinToken) and returns data ONLY if pinToken is a valid, single-use, 10-second token issued after a correct PIN.
-- Everywhere a balance could appear (Home, Profile, bank account selector, Check Balance screen, Loans, Payment review screen, history "balance after" column), show "••••••" or nothing. Bank account cards show only the bank name and last 4 digits, never the balance.
-- Every route to a balance (button, voice command "check balance", "मेरा बैलेंस बताओ", "माझा बॅलन्स सांग", search bar, deep link, browser back/forward) must open the PIN gate first. No bypass.
-- After PIN success: show the balance for 10 seconds with a countdown, then auto-hide and discard the token. Leaving the screen, switching tabs or backgrounding the app hides it immediately.
-- The balance is spoken aloud only after PIN success and only if Voice confirmations are ON. Never speak it before.
-- Wrong PIN: show "Incorrect PIN" in the selected language and speak it. 3 wrong attempts lock for 30 seconds.
+# 🎙️ VaaniPay
 
------------------------------------------------------
-CHANGE 2: MULTILINGUAL "LISTEN" (TTS) WITH NATIVE-LANGUAGE NUMBERS AND A PLEASANT VOICE
------------------------------------------------------
-A. Numbers spoken in the selected language (not English)
-- Build /i18n/numberToWords with converters for English (Indian system: lakh, crore), Hindi, Marathi, Tamil, Telugu, Bengali.
-- Before any text goes to speechSynthesis, run it through speakableText(text, lang), which converts:
-  - Amounts: "₹500" -> Marathi "पाचशे रुपये", Hindi "पाँच सौ रुपये", Tamil "ஐநூறு ரூபாய்"; "₹1,240" -> "बारा सौ चाळीस रुपये" style; "₹12,450.50" -> rupees and paise.
-  - Plain numbers, mobile numbers (read digit by digit in native digit words, with short pauses after every 3-4 digits), dates ("29 Sep" -> "एकोणतीस सप्टेंबर"), times ("11:45 AM" -> "सकाळी अकरा वाजून पंचेचाळीस मिनिटे"), percentages, EMI counts, "2 days".
-  - Transaction IDs: read as "transaction ID ending in ..." with last 4 digits only.
-  - Strip emojis, symbols (✓ ⚠️ 🎙️ ••••), markdown and raw UPI IDs. Read UPI IDs as "name at vaani".
-- Optional display setting "Native numerals" (०१२३४५६७८९ / ௦௧௨ / ౦౧౨ / ০১২): OFF by default, and it never changes the PIN keypad layout.
-- The Listen button beside the notification bell reads the current screen's key information (title, main amount or status, due bills, next action) in the selected language, in short sentences.
+### *Banking in your language. Payments with confidence.*
 
-B. Voice quality (must sound pleasant, not robotic)
-- useTTS hook:
-  - Wait for voices to load (onvoiceschanged) before speaking.
-  - Rank voices for the locale: prefer neural or natural voices (names containing "Natural", "Neural", "Online", "Google", "Microsoft ... Online", "Swara", "Neerja", "Kalpana", "Heera", "Pallavi", "Valluvar", "Shruti"), prefer female voices by default, prefer exact locale (mr-IN, hi-IN, ta-IN, te-IN, bn-IN, en-IN), then fall back to hi-IN for Marathi (same script) with a small notice, then to any available voice.
-  - Settings: rate 0.9, pitch 1.0, volume 1.0 (elders can pick Slow 0.75 / Normal 0.9 / Fast 1.05).
-  - Split text into short sentences and speak them in sequence with 250-400ms pauses. This also avoids the Chrome bug where long utterances cut off.
-  - Always call speechSynthesis.cancel() before a new utterance; expose speak(), stop(), pause(), isSpeaking.
-  - Highlight the sentence currently being spoken on screen.
-- Settings -> Voice: voice picker (list of available voices for the selected language), "Test voice" button, speed slider, remembered per language.
-- Adapter interface TTSProvider { speak(text, lang) } with a default BrowserTTS and a stub for cloud TTS (Bhashini / Google / Azure neural) that can be swapped in for better quality. Show "Voice not installed for this language" plus install guidance if no matching voice exists.
-- While TTS is speaking, pause speech recognition, then auto-resume listening when TTS ends. This prevents the app from hearing itself.
+A **voice-first digital payments app** that speaks the language of the people it serves, built for low-literacy, elderly and regional-language users.
 
------------------------------------------------------
-CHANGE 3: VOICE "CONFIRM" MUST OPEN THE PIN CHECKOUT
------------------------------------------------------
-Implement the assistant as an explicit state machine:
-IDLE -> LISTENING -> PARSED -> AWAITING_CONFIRMATION -> PIN_CHECKOUT -> PROCESSING -> SUCCESS | FAILED
+## 💡 The Problem
 
-- In AWAITING_CONFIRMATION, the app speaks: "Do you want to send ₹500 to Aditi? Say confirm or cancel." (number spoken in native words), shows Confirm/Cancel buttons, and auto-starts the mic in "confirmation mode".
-- Confirmation mode matches only confirm/cancel phrases (fuzzy, all languages):
-  - Confirm: confirm, confirm payment, yes, ok, proceed, pay, "हो", "होय", "ठीक आहे", "पुष्टी करा", "कन्फर्म", "हाँ", "हां", "भेजो", "ஆம்", "உறுதி", "అవును", "నిర్ధారించు", "হ্যাঁ", "নিশ্চিত".
-  - Cancel: cancel, no, stop, back, "रद्द", "नाही", "नहीं", "रद्द करा", "வேண்டாம்", "వద్దు", "না", "বাতিল".
-- On confirm (voice OR button) -> IMMEDIATELY navigate to the PIN Checkout screen showing a payment summary (recipient, amount, note) and the PIN keypad, and speak "Please enter your PIN to complete the payment." Do NOT execute the payment before a correct PIN.
-- On correct PIN -> processing spinner (mock UPI simulation) -> success screen, spoken. On cancel -> back to Home, speak "Payment cancelled."
-- If the reply is unclear, re-ask once ("Please say confirm or cancel"), then show the buttons only.
-- Saying "confirm payment" when nothing is pending -> "There is no payment to confirm."
+Digital payments have transformed India, but the apps assume you can **read English, navigate dense menus and type accurately**. For millions of people, that's a wall.
 
------------------------------------------------------
-CHANGE 4: VOICE PIN MUST WORK
------------------------------------------------------
-Root-cause fixes (must be implemented):
-1. PIN INPUT MODE IS SEPARATE FROM THE INTENT ENGINE. When the PIN screen is open, all recognised speech goes ONLY to parseSpokenPin(). It is NOT run through the fraud keyword filter. (The words "PIN" and "OTP" are blocked only in the normal assistant, never on the app-lock/checkout PIN screen.)
-2. Use a dedicated SpeechRecognition instance: continuous=false, interimResults=true, maxAlternatives=5, and check ALL alternatives for a valid 4-digit result. Use the UI language locale first, then automatically retry once with en-IN, because digit recognition is best there.
-3. parseSpokenPin(transcript) normalises the text and returns exactly 4 digits or null:
-   - Lowercase and remove filler words (pin, is, my, the, password, "माझा", "मेरा", "पिन", "आहे", "है", "hai", "ahe", "number", etc.).
-   - Accept digit strings with separators: "1234", "1 2 3 4", "1-2-3-4", "1,2,3,4".
-   - Accept spoken digit words in all languages: English (one two three four; "oh" and "zero" = 0), Hindi (एक दो तीन चार पाँच छह सात आठ नौ शून्य), Marathi (एक दोन तीन चार पाच सहा सात आठ नऊ शून्य), Tamil, Telugu, Bengali, and Devanagari/Tamil/Telugu/Bengali numerals (१२३४).
-   - Accept grouped forms: "twelve thirty four" -> 1234, "बारा चौतीस" -> 1234, "one two three four" -> 1234, and "one thousand two hundred thirty four" -> 1234.
-   - Accept romanised words: "ek do teen char", "ek don teen char".
-   - If fewer than 4 digits, keep the partial digits and ask for the rest ("Please say the remaining digits"). If more than 4, use the first 4.
-4. UI behaviour: each recognised digit fills one masked dot as it arrives. NEVER display the digits, log them, store them or read them aloud. Clear the transcript buffer immediately after parsing. Auto-submit when 4 digits are captured. Show a "Listening for your PIN..." state with a pulse, a Retry mic button, and always-visible keypad fallback.
-5. Handle errors: microphone permission denied ("Please allow microphone access"), no-speech timeout (8s), unsupported browser -> keypad only with a friendly message.
-6. Before first voice-PIN use, show: "Speak your PIN only in a private place. This is a demo PIN." Voice PIN is optional. Keypad remains default.
-7. Unit tests / demo cases that MUST pass: "1234", "one two three four", "my pin is 1 2 3 4", "twelve thirty four", "ek do teen char", "एक दोन तीन चार", "१२३४", "pin is one two three four".
+| Who is left behind | What goes wrong |
+|---|---|
+| 🧓 **Elderly users** | Small text, complex menus, fear of pressing the wrong button |
+| 📖 **Low-literacy users** | Text-heavy screens they can't confidently read |
+| 🗣️ **Regional-language speakers** | English-first interfaces, unfamiliar banking words |
+| 📱 **Feature-phone / low-bandwidth users** | Apps that don't work for them at all |
+| 🎣 **Everyone, especially new users** | Easy targets for OTP and PIN scams |
 
------------------------------------------------------
-CHANGE 5: VOICE ENTRY OF MOBILE NUMBER MUST WORK
------------------------------------------------------
-- Pay to Mobile Number screen: a 10-digit field (controlled React state, updated through setState, never by mutating the DOM directly), a big mic button "Speak the number", and a keypad fallback.
-- parseSpokenMobile(transcript, lang) returns the digits found:
-  - Accept "9876543210", "98765 43210", "9 8 7 6 5 4 3 2 1 0", digit words in all six languages (Hindi "नौ आठ सात छह पाँच चार तीन दो एक शून्य", Marathi "नऊ आठ सात सहा पाच चार तीन दोन एक शून्य", Tamil, Telugu, Bengali, English), Native numerals, and romanised words.
-  - Handle "double nine" / "triple seven" / "डबल नाइन" / "दुहेरी नऊ" / "डबल नौ" (repeat digits), and "oh" = 0.
-  - Strip "+91", "91" (when 12 digits), and a leading "0". Ignore filler words ("my number is", "मेरा नंबर है", "माझा नंबर").
-  - Append digits across multiple utterances (users often speak in chunks: "98765" then "43210") up to 10 digits. Ignore extra digits. Fill the field live from interim results.
-  - Use the UI locale first, then retry with en-IN if fewer than 10 digits were found.
-- After 10 digits: show the number in large grouped digits (98765 43210), speak it back digit by digit, slowly, in the selected language with short pauses, then ask "Is this correct? Say yes to continue or say change." Voice commands: yes/confirm -> continue; "change", "clear", "delete last digit", "बदला", "बदलो", "मिटाओ" -> edit.
-- Validate: exactly 10 digits, starts with 6-9. Otherwise show and speak an error in the selected language and let the user retry.
-- Show the resolved contact name (mock lookup) or a "New number" warning, then proceed to the amount step.
-- The same parser is reused for the assistant: "send 500 to 9876543210" and "9876543210 ला पाचशे रुपये पाठवा".
-- Demo/test cases that MUST pass: "9876543210", "nine eight seven six five four three two one zero", "नऊ आठ सात सहा पाच चार तीन दोन एक शून्य", "double nine eight seven six five four three two one", "mera number 9876543210 hai".
+## ✅ Our Solution
 
------------------------------------------------------
-UPDATED DEMO CHECKLIST (add to section 12)
------------------------------------------------------
-- Balance is not visible anywhere before the PIN. Voice "check balance" -> PIN -> shown 10s -> hides.
-- Listen button reads the screen in Marathi with numbers as Marathi words, in a natural voice.
-- Say "send 500 rs to Aditi" -> read aloud -> "confirm payment" -> PIN checkout screen opens -> say "one two three four" -> success spoken.
-- Voice PIN works with "1234", "one two three four", and "एक दोन तीन चार".
-- Speak a 10-digit mobile number -> field fills -> read back -> confirm -> pay.
+> **"You don't need to know how to navigate a banking app. Just tell VaaniPay what you want to do."**
+
+VaaniPay keeps the **familiar layout of popular Indian payment apps** (so there's nothing new to learn) and puts a **voice assistant at the centre**, with typed input always available as a fallback.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🗣️ Speak naturally
+Say *"Send 500 rs to Aditi"* or *"मला अदितीला पाचशे रुपये पाठवायचे आहेत"*. VaaniPay understands the language, the person and the amount.
+
+### 🔊 Hear it back
+Every request is read aloud, with **numbers spoken as native-language words** in a pleasant voice, so users can verify without reading.
+
+</td>
+<td width="50%" valign="top">
+
+### 🔐 Confirm, then PIN
+Voice **never** pays directly. Every payment goes through spoken confirmation and a PIN checkout first.
+
+### 🛡️ Stay protected
+New-recipient warnings, high-amount alerts and scam-phrase detection keep users safe from fraud.
+
+</td>
+</tr>
+</table>
+
+---
+
+## ✨ Features
+
+### 🎙️ Voice Assistant (the hero)
+
+```text
+ You say  →  "send 500 rs to Aditi"
+ App reads →  "You said: send five hundred rupees to Aditi"
+ App asks  →  "Do you want to send five hundred rupees to Aditi? Say confirm or cancel."
+ You say  →  "confirm payment"
+ App opens →  🔐 PIN checkout   →   ✅ Payment successful (simulated)
+```
+
+- Live transcript while speaking, shown in a chat-style bubble
+- Parsed card showing **Intent · Recipient · Amount · Language**
+- "How VaaniPay understood you" panel with the raw JSON, for transparency
+- Low confidence? It **asks a clarifying question** instead of guessing
+
+### 🔐 PIN & Privacy
+
+| Feature | Behaviour |
+|---|---|
+| **App lock** | PIN screen on every launch (demo PIN `1234`) |
+| **Hidden balance** | Balance shown as `••••••` and revealed **only after PIN**, then auto-hides in 10 seconds |
+| **Voice PIN** | Say *"1234"*, *"one two three four"* or *"एक दोन तीन चार"*. Digits fill masked dots instantly |
+| **Never exposed** | Spoken PIN is never displayed, logged, stored or read aloud |
+| **Lockout** | 3 wrong attempts lock the app for 30 seconds |
+
+### 💸 Payments
+
+- 📷 **Scan & Pay**: simulated QR scanner
+- 📥 **Receive Money**: My QR, UPI ID, copy / share, *"Speak my UPI ID"*
+- 📞 **Pay to Mobile Number**: by **voice or keypad**. Handles *"double nine"*, chunked speech and native-language digits
+- 🆔 **Pay to UPI ID** with verification
+- 👥 **Pay to Contact** with search by typing or voice
+- 🙋 **Request Money**
+
+**Every payment follows the same safe path:**
+
+`Amount → Review + safety checks → PIN → Processing → Success receipt`
+
+### 🧾 Bills, Loans, SIP & Rewards
+
+| Recharge & Bills | Money & Investments | Rewards |
+|---|---|---|
+| Mobile Recharge · DTH | Loans + EMI calculator | Scratch cards |
+| Electricity · Water · Gas | SIP / Mutual Funds | Cashback |
+| Broadband · FASTag | Fixed Deposit · Gold | Referral code |
+| Credit Card · Rent | Insurance | Coupons |
+| School Fees · Loan EMI | Credit Score | |
+
+### 🔔 Smart Bill Alerts
+
+- Colour-coded banner on Home: 🟠 upcoming · 🔴 overdue
+- Notification centre grouped as **Due Today / Upcoming / Overdue / Offers / Security**
+- After login, a popup **reads your due bills aloud**: *"You have 2 bills due. Electricity bill of ₹1,240 is due in 2 days."*
+- Paying from an alert still goes through confirmation and PIN
+
+### 🛡️ Fraud & Safety Layer
+
+- ⚠️ Flags: new recipient · amount over ₹5,000 · unusually large amount · unknown number · first-time UPI ID
+- 🚫 Scam-word detection (OTP, UPI PIN, password, CVV) with a clear warning: **"Never share your UPI PIN or OTP with anyone."**
+- 🏛️ **Safety Center** with tips, a mock *Report suspicious activity* form and *Block a contact*
+
+### 🌐 Full Language Support
+
+<div align="center">
+
+**English** · **मराठी** · **हिंदी** · **தமிழ்** · **తెలుగు** · **বাংলা**
+
+</div>
+
+Every string in the UI switches with the language: navigation, buttons, alerts, errors and notifications. Speech recognition and synthesis use the matching locale (`en-IN`, `mr-IN`, `hi-IN`, `ta-IN`, `te-IN`, `bn-IN`).
+
+### ♿ Accessibility First
+
+| Mode | What it does |
+|---|---|
+| 🔊 **Listen button** | Reads the current screen aloud in the chosen language |
+| 🔠 **Large text** | Three text sizes |
+| 🌗 **High contrast** | WCAG AA contrast and clear focus states |
+| 👆 **Simplified mode** | Home becomes **6 giant buttons**: Send · Balance · Scan · Receive · Bills · Help |
+| 🗣️ **Voice-only mode** | Fully conversational banking, from request to confirmation to result |
+| 🎚️ **Voice controls** | Voice picker, speed slider, test button |
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart TD
+    A["🎙️ User Voice / ⌨️ Typed Text"] --> B["Speech Recognition Layer"]
+    B --> C["Language Detection"]
+    C --> D["Intent Extraction"]
+    D --> E["Entity Extraction<br/>recipient · amount · number · bill"]
+    E --> F{"🛡️ Safety / Fraud Layer"}
+    F -->|"Risk found"| G["⚠️ Warning screen"]
+    F -->|"Clear"| H["🔊 Spoken + On-screen Confirmation"]
+    G --> H
+    H --> I["🔐 PIN Checkout"]
+    I --> J["Mock UPI 123PAY / IVR API"]
+    J --> K["✅ Result (shown + spoken)"]
+```
+
+### Assistant State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> LISTENING: tap mic
+    LISTENING --> PARSED: speech recognised
+    PARSED --> AWAITING_CONFIRMATION: intent understood
+    AWAITING_CONFIRMATION --> PIN_CHECKOUT: "confirm"
+    AWAITING_CONFIRMATION --> IDLE: "cancel"
+    PIN_CHECKOUT --> PROCESSING: correct PIN
+    PROCESSING --> SUCCESS
+    PROCESSING --> FAILED
+    SUCCESS --> IDLE
+    FAILED --> IDLE
+```
+
+### 🧰 Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React · TypeScript · Tailwind CSS |
+| Speech input | Web Speech API (`SpeechRecognition`) |
+| Speech output | `speechSynthesis` behind a pluggable `TTSProvider` (cloud TTS like Bhashini / Google / Azure can be swapped in) |
+| Intent & entities | Frontend rule-based engine simulating an NLU layer |
+| Data | Mock JSON, in-memory state |
+| Payments | Simulated UPI 123PAY / IVR API |
+| Fonts | Noto Sans + Devanagari · Tamil · Telugu · Bengali |
+
+---
+
+## 🚀 Quick Start
+
+**Prerequisites:** Node.js 18+ and **Google Chrome** or **Microsoft Edge** (best speech recognition and voices).
+
+```bash
+# 1. Clone
+git clone https://github.com/aditinitnaware/VaaniPay.git
+cd VaaniPay
+
+# 2. Install
+npm install
+
+# 3. Run
+npm run dev
+```
+
+Open the URL shown in your terminal (usually `http://localhost:5173`).
+
+```bash
+# Production build
+npm run build
+npm run preview
+```
+
+> [!NOTE]
+> Speech recognition needs **HTTPS or localhost** and microphone permission.
+
+### 🔑 Demo Credentials
+
+| Item | Value |
+|---|---|
+| App PIN | `1234` *(demo only)* |
+| Sample UPI ID | `yourname@vaani` |
+| Mock contacts | Aditi · Raju · Mom · Amit · Priya · Electricity Board · Sharma General Store |
+
+---
+
+## 🎬 Demo Script
+
+<details open>
+<summary><b>Click to collapse: the 12-step judge walkthrough</b></summary>
+
+<br/>
+
+1. 🔓 Open the app → PIN screen → choose **मराठी** → enter `1234` (try keypad **and** voice)
+2. 🔔 The due-bill popup is **read aloud**
+3. 🎙️ Tap the mic: *"मला अदितीला पाचशे रुपये पाठवायचे आहेत"* → transcript read back → parsed card → say **"confirm"** → PIN checkout → say *"एक दोन तीन चार"* → success
+4. 💰 Say *"मेरा बैलेंस बताओ"* → PIN required → balance visible for 10 seconds, then hidden
+5. 📞 Pay to Mobile Number → **speak** a 10-digit number → read-back → pay
+6. 📷 Scan QR (simulated) → pay the merchant
+7. 📥 Show **My QR** and UPI ID
+8. 🧾 Browse Loans, SIP, Rewards and Bills
+9. 🔎 History voice search: *"मी अदितीला किती पैसे पाठवले?"*
+10. ⚠️ Send ₹8,000 to a new contact → **fraud warning**
+11. 🌐 Switch to Hindi / Tamil → the **entire UI** changes language
+12. ♿ Enable **Simplified** and **Voice-only** mode
+
+> 💡 Keep typed input ready as a backup if the room is noisy.
+
+</details>
+
+### 🗣️ Try These Voice Commands
+
+| Language | Say this | Detected intent |
+|---|---|---|
+| English | "Send 500 rs to Aditi" | `SEND_MONEY` |
+| मराठी | "मला राजूला पाचशे रुपये पाठवायचे आहेत" | `SEND_MONEY` |
+| हिंदी | "मेरा बैलेंस बताओ" | `CHECK_BALANCE` |
+| मराठी | "electricity bill भरायचं आहे" | `PAY_BILL` |
+| Hinglish | "299 ka recharge karo" | `RECHARGE` |
+| मराठी | "मी राजूला किती पैसे पाठवले?" | `TRANSACTION_HISTORY` |
+| मराठी | "माझं payment झालं का?" | `TRANSACTION_STATUS` |
+
+<details>
+<summary><b>Example intent output</b></summary>
+
+```json
+{
+  "intent": "SEND_MONEY",
+  "recipient": "Aditi",
+  "amount": 500,
+  "language": "Marathi"
+}
+```
+
+</details>
+
+---
+
+## 🔐 Security by Design
+
+- 🎭 The only PIN in the app is a **fake demo PIN**. The assistant never asks for a real UPI PIN or OTP.
+- 🧱 PIN entry uses a **separate parser** and is never passed through the intent engine.
+- 🏦 The balance lives in a mock **vault** and is released only with a valid, single-use, time-limited token.
+- 🙈 Spoken PIN digits are masked instantly, never logged, stored or read aloud.
+- 🚫 Voice alone can **never** execute a payment. Confirmation and PIN are always required.
+- 🔒 No personal data is collected, and nothing leaves the browser.
+
+---
+
+## ⚠️ Known Limitations
+
+- Speech quality and language support depend on the browser and OS. Marathi may fall back to a Hindi voice if none is installed.
+- Voice recognition accuracy varies with noise and accent.
+- The intent engine is rule-based, a simulation of a trained NLU model.
+- All banking, UPI, QR and bill data is mocked.
+
+## 🔭 Future Scope
+
+- [ ] BHASHINI / Whisper-style ASR for better regional speech recognition
+- [ ] Cloud neural TTS for more natural voices
+- [ ] Real **UPI 123PAY / IVR** integration for feature-phone users
+- [ ] Voice biometrics as an additional security layer
+- [ ] Trained multilingual intent and entity model
+- [ ] Offline and low-bandwidth mode
+
+---
+
+<br/>
+
+**VaaniPay** · *Banking in your language. Payments with confidence.* 🇮🇳
+
+</div>
